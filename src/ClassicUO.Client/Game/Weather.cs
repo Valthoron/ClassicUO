@@ -358,9 +358,9 @@ namespace ClassicUO.Game
 
                         break;
 
-                    case WeatherType.WT_STORM_BREWING:
-                        effect.SpeedX = Wind * 1.5f;
-                        effect.SpeedY = 1.5f;
+                    case WeatherType.WT_STORM_APPROACH:
+                        effect.SpeedX = Wind;
+                        effect.SpeedY = 6.0f;
 
                         if (windChanged)
                         {
@@ -370,7 +370,7 @@ namespace ClassicUO.Game
                         break;
 
                     case WeatherType.WT_SNOW:
-                    case WeatherType.WT_STORM_APPROACH:
+                    case WeatherType.WT_STORM_BREWING:
 
                         if (Type == WeatherType.WT_SNOW)
                         {
@@ -379,8 +379,8 @@ namespace ClassicUO.Game
                         }
                         else
                         {
-                            effect.SpeedX = Wind;
-                            effect.SpeedY = 6.0f;
+                            effect.SpeedX = Wind * 1.5f;
+                            effect.SpeedY = 1.5f;
                         }
 
                         // Set on every frame, so a particle that a higher density or a larger window adds moves at once
@@ -466,6 +466,7 @@ namespace ClassicUO.Game
                         break;
 
                     case WeatherType.WT_SNOW:
+                    case WeatherType.WT_STORM_BREWING:
 
                         effect.X += effect.SpeedX * speedOffset;
                         effect.Y += effect.SpeedY * speedOffset;
