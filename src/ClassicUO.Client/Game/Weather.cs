@@ -26,9 +26,11 @@ namespace ClassicUO.Game
         private const int MAX_WEATHER_EFFECT = 250;
         private const int MAX_WEATHER_PARTICLES = 2000;
         private const float SIMULATION_TIME = 37.0f;
+        private const float RISE_TIME = 10000.0f; // ms from no particles to the full count
 
         private readonly WeatherEffect[] _effects = new WeatherEffect[MAX_WEATHER_PARTICLES];
         private uint _timer, _windTimer, _lastTick;
+        private float _pendingParticles;
         private readonly World _world;
 
         public Weather(World world)
@@ -40,7 +42,6 @@ namespace ClassicUO.Game
         public WeatherType? CurrentWeather { get; private set; }
         public WeatherType Type { get; private set; }
         public byte Count { get; private set; }
-        public int ScaledCount { get; private set; }
         public int CurrentCount { get; private set; }
         public byte Temperature{ get; private set; }
         public sbyte Wind { get; private set; }
@@ -62,140 +63,99 @@ namespace ClassicUO.Game
             CurrentCount = 0;
             Wind = 0;
             _windTimer = _timer = 0;
+            _pendingParticles = 0;
             CurrentWeather = null;
         }
 
+        // A packet only sets the type and the density that Draw works toward. Particles of the type are added
+        // over RISE_TIME, and a particle that is no longer wanted is removed when it leaves the view. So a start,
+        // a change of density, an end and a change of type are all gradual, and two types mix during a change.
         public void Generate(WeatherType type, byte count, byte temp)
         {
-            // ServUO resends the weather every 30 seconds with a rising or falling density. A repeat of the
-            // current type takes the new density and restarts the timer, but keeps the wind and the particles
-            // and shows no message.
-            if ((CurrentWeather == type) && (count > 0))
-            {
-                Count = (byte) Math.Min(MAX_WEATHER_EFFECT, (int) count);
-                Temperature = temp;
-                _timer = Time.Ticks + Constants.WEATHER_TIMER;
-                ScaledCount = CalculateScaledCount(Count);
-                CurrentCount = ScaledCount;
-
-                return;
-            }
-
-            Reset();
-
-            Type = type;
-            Count = (byte) Math.Min(MAX_WEATHER_EFFECT, (int) count);
             Temperature = temp;
-            _timer = Time.Ticks + Constants.WEATHER_TIMER;
 
-            _lastTick = Time.Ticks;
-
-            if (Type == WeatherType.WT_INVALID_0 || Type == WeatherType.WT_INVALID_1)
+            if (type == WeatherType.WT_INVALID_0 || type == WeatherType.WT_INVALID_1 || count == 0)
             {
-                _timer = 0;
+                Count = 0;
                 CurrentWeather = null;
 
                 return;
             }
 
-            bool showMessage = Count > 0;
+            // ServUO resends the weather every 30 seconds, so a repeat of the current type shows no new message
+            bool isNewType = CurrentWeather != type;
+
+            Type = type;
+            Count = (byte) Math.Min(MAX_WEATHER_EFFECT, (int) count);
+            _timer = Time.Ticks + Constants.WEATHER_TIMER;
+            CurrentWeather = type;
+
+            if (!isNewType)
+            {
+                return;
+            }
+
+            _windTimer = 0;
 
             switch (type)
             {
                 case WeatherType.WT_RAIN:
-                    if (showMessage)
-                    {
-                        GameActions.Print
-                        (
-                            _world,
-                            ResGeneral.ItBeginsToRain,
-                            1154,
-                            MessageType.System,
-                            3,
-                            false
-                        );
-
-                        CurrentWeather = type;
-                    }
+                    GameActions.Print
+                    (
+                        _world,
+                        ResGeneral.ItBeginsToRain,
+                        1154,
+                        MessageType.System,
+                        3,
+                        false
+                    );
 
                     break;
 
                 case WeatherType.WT_STORM_APPROACH:
-                    if (showMessage)
-                    {
-                        GameActions.Print
-                        (
-                            _world,
-                            ResGeneral.AFierceStormApproaches,
-                            1154,
-                            MessageType.System,
-                            3,
-                            false
-                        );
+                    GameActions.Print
+                    (
+                        _world,
+                        ResGeneral.AFierceStormApproaches,
+                        1154,
+                        MessageType.System,
+                        3,
+                        false
+                    );
 
-                        CurrentWeather = type;
-
-                        PlayThunder();
-                    }
+                    PlayThunder();
 
                     break;
 
                 case WeatherType.WT_SNOW:
-                    if (showMessage)
-                    {
-                        GameActions.Print
-                        (
-                            _world,
-                            ResGeneral.ItBeginsToSnow,
-                            1154,
-                            MessageType.System,
-                            3,
-                            false
-                        );
+                    GameActions.Print
+                    (
+                        _world,
+                        ResGeneral.ItBeginsToSnow,
+                        1154,
+                        MessageType.System,
+                        3,
+                        false
+                    );
 
-                        CurrentWeather = type;
-
-                        PlayWind();
-                    }
+                    PlayWind();
 
                     break;
 
                 case WeatherType.WT_STORM_BREWING:
-                    if (showMessage)
-                    {
-                        GameActions.Print
-                        (
-                            _world,
-                            ResGeneral.AStormIsBrewing,
-                            1154,
-                            MessageType.System,
-                            3,
-                            false
-                        );
+                    GameActions.Print
+                    (
+                        _world,
+                        ResGeneral.AStormIsBrewing,
+                        1154,
+                        MessageType.System,
+                        3,
+                        false
+                    );
 
-                        CurrentWeather = type;
-
-                        PlayThunder();
-                    }
+                    PlayThunder();
 
                     break;
-            }
-
-
-            _windTimer = 0;
-
-            ScaledCount = CalculateScaledCount(Count);
-            CurrentCount = ScaledCount;
-
-            for (int i = 0; i < _effects.Length; i++)
-            {
-                ref WeatherEffect effect = ref _effects[i];
-                effect.X = RandomHelper.GetValue(0, Client.Game.Scene.Camera.Bounds.Width);
-                effect.Y = RandomHelper.GetValue(0, Client.Game.Scene.Camera.Bounds.Height);
-
-                // OrionUO (WeatherEffeect.cpp): the ID shifts the sway phase, and the scale ratio adds up to about 1.5 to the speed
-                effect.ID = (uint) RandomHelper.GetValue(0, 1999);
-                effect.ScaleRatio = (effect.ID % 20) / 13.0f;
             }
         }
 
@@ -237,33 +197,30 @@ namespace ClassicUO.Game
             Client.Game.Audio.PlaySoundWithDistance(_world, sound, _world.Player.X + randX, _world.Player.Y + randY);
         }
 
+        private void AddParticle(WeatherType type, Point winsize)
+        {
+            ref WeatherEffect effect = ref _effects[CurrentCount++];
+
+            effect.Type = type;
+            effect.X = RandomHelper.GetValue(0, winsize.X);
+            effect.Y = RandomHelper.GetValue(0, winsize.Y);
+
+            // OrionUO (WeatherEffeect.cpp): the ID shifts the sway phase, and the scale ratio adds up to about 1.5 to the speed
+            effect.ID = (uint) RandomHelper.GetValue(0, 1999);
+            effect.ScaleRatio = (effect.ID % 20) / 13.0f;
+        }
+
         public void Draw(UltimaBatcher2D batcher, int x, int y, float layerDepth)
         {
-            bool removeEffects = false;
+            int targetCount = _timer < Time.Ticks ? 0 : CalculateScaledCount(Count);
 
-            if (_timer < Time.Ticks)
+            if (CurrentCount == 0 && targetCount == 0)
             {
-                if (CurrentCount == 0)
-                {
-                    // Time for the weather has passed and all weather effects have disappeared
-                    Reset();
-                    return;
-                }
+                // The weather has ended and its last particle has left the view
+                Reset();
+                _lastTick = Time.Ticks;
 
-                removeEffects = true;
-            }
-            else if (Type == WeatherType.WT_INVALID_0 || Type == WeatherType.WT_INVALID_1)
-            {
                 return;
-            }
-
-            //Rescale the count if window size has changed
-            int newScaledCount = CalculateScaledCount(Count);
-
-            if (newScaledCount != ScaledCount)
-            {
-                CurrentCount = Math.Min(MAX_WEATHER_PARTICLES, CurrentCount * newScaledCount / ScaledCount);
-                ScaledCount = newScaledCount;
             }
 
             uint passed = Time.Ticks - _lastTick;
@@ -309,6 +266,23 @@ namespace ClassicUO.Game
                 }
             }
 
+            if (windChanged && targetCount > 0)
+            {
+                switch (Type)
+                {
+                    case WeatherType.WT_STORM_APPROACH:
+                    case WeatherType.WT_STORM_BREWING:
+                        PlayThunder();
+
+                        break;
+
+                    case WeatherType.WT_SNOW:
+                        PlayWind();
+
+                        break;
+                }
+            }
+
             //switch ((WEATHER_TYPE) Type)
             //{
             //    case WEATHER_TYPE.WT_RAIN:
@@ -326,6 +300,36 @@ namespace ClassicUO.Game
             //Point winpos = ProfileManager.CurrentProfile.GameWindowPosition;
             Point winsize = new Point(Client.Game.Scene.Camera.Bounds.Width, Client.Game.Scene.Camera.Bounds.Height);
 
+            // Add particles of the current type until the target count is reached
+            int typeCount = 0;
+
+            for (int i = 0; i < CurrentCount; i++)
+            {
+                if (_effects[i].Type == Type)
+                {
+                    typeCount++;
+                }
+            }
+
+            if (typeCount < targetCount)
+            {
+                _pendingParticles += targetCount * passed / RISE_TIME;
+
+                int added = Math.Min((int) _pendingParticles, Math.Min(targetCount - typeCount, MAX_WEATHER_PARTICLES - CurrentCount));
+
+                for (int i = 0; i < added; i++)
+                {
+                    AddParticle(Type, winsize);
+                }
+
+                typeCount += added;
+                _pendingParticles -= added;
+            }
+            else
+            {
+                _pendingParticles = 0;
+            }
+
             Rectangle snowRect = new Rectangle(0, 0, 2, 2);
 
             for (int i = 0; i < CurrentCount; i++)
@@ -334,16 +338,16 @@ namespace ClassicUO.Game
 
                 if (effect.X < x || effect.X > x + winsize.X || effect.Y < y || effect.Y > y + winsize.Y)
                 {
-                    if (removeEffects)
+                    // Remove a particle of another type, or one above the target count, and fill its slot with the last one
+                    if (effect.Type != Type || typeCount > targetCount)
                     {
-                        if (CurrentCount > 0)
+                        if (effect.Type == Type)
                         {
-                            CurrentCount--;
+                            typeCount--;
                         }
-                        else
-                        {
-                            CurrentCount = 0;
-                        }
+
+                        effect = _effects[--CurrentCount];
+                        i--;
 
                         continue;
                     }
@@ -353,7 +357,7 @@ namespace ClassicUO.Game
                 }
 
 
-                switch (Type)
+                switch (effect.Type)
                 {
                     case WeatherType.WT_RAIN:
                         float scaleRation = effect.ScaleRatio;
@@ -366,17 +370,12 @@ namespace ClassicUO.Game
                         effect.SpeedX = Wind;
                         effect.SpeedY = 6.0f;
 
-                        if (windChanged)
-                        {
-                            PlayThunder();
-                        }
-
                         break;
 
                     case WeatherType.WT_SNOW:
                     case WeatherType.WT_STORM_BREWING:
 
-                        if (Type == WeatherType.WT_SNOW)
+                        if (effect.Type == WeatherType.WT_SNOW)
                         {
                             effect.SpeedX = Wind;
                             effect.SpeedY = 1.0f;
@@ -387,22 +386,10 @@ namespace ClassicUO.Game
                             effect.SpeedY = 1.5f;
                         }
 
-                        // Set on every frame, so a particle that a higher density or a larger window adds moves at once
+                        // Set on every frame, so a particle that was just added moves at once
                         effect.SpeedAngle = MathHelper.ToDegrees((float) Math.Atan2(effect.SpeedX, effect.SpeedY));
 
                         effect.SpeedMagnitude = (float) Math.Sqrt(Math.Pow(effect.SpeedX, 2) + Math.Pow(effect.SpeedY, 2));
-
-                        if (windChanged)
-                        {
-                            if (Type == WeatherType.WT_SNOW)
-                            {
-                                PlayWind();
-                            }
-                            else
-                            {
-                                PlayThunder();
-                            }
-                        }
 
                         float speedAngle = effect.SpeedAngle;
                         float speedMagnitude = effect.SpeedMagnitude;
@@ -420,7 +407,7 @@ namespace ClassicUO.Game
 
                 float speedOffset = passed / SIMULATION_TIME;
 
-                switch (Type)
+                switch (effect.Type)
                 {
                     case WeatherType.WT_RAIN:
                     case WeatherType.WT_STORM_APPROACH:
@@ -498,6 +485,7 @@ namespace ClassicUO.Game
         {
             public float SpeedX, SpeedY, X, Y, ScaleRatio, SpeedAngle, SpeedMagnitude;
             public uint ID;
+            public WeatherType Type;
         }
     }
 }
