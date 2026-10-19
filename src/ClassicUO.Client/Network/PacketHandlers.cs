@@ -2331,14 +2331,10 @@ namespace ClassicUO.Network
             }
 
             WeatherType type = (WeatherType)p.ReadUInt8();
+            byte count = p.ReadUInt8();
+            byte temp = p.ReadUInt8();
 
-            if (world.Weather.CurrentWeather != type)
-            {
-                byte count = p.ReadUInt8();
-                byte temp = p.ReadUInt8();
-
-                world.Weather.Generate(type, count, temp);
-            }
+            world.Weather.Generate(type, count, temp);
         }
 
         private static void BookData(World world, ref StackDataReader p)

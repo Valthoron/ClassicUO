@@ -23,10 +23,11 @@ namespace ClassicUO.Game
 
     internal sealed class Weather
     {
-        private const int MAX_WEATHER_EFFECT = 70;
+        private const int MAX_WEATHER_EFFECT = 250;
+        private const int MAX_WEATHER_PARTICLES = 2000;
         private const float SIMULATION_TIME = 37.0f;
 
-        private readonly WeatherEffect[] _effects = new WeatherEffect[byte.MaxValue];
+        private readonly WeatherEffect[] _effects = new WeatherEffect[MAX_WEATHER_PARTICLES];
         private uint _timer, _windTimer, _lastTick;
         private readonly World _world;
 
@@ -39,8 +40,8 @@ namespace ClassicUO.Game
         public WeatherType? CurrentWeather { get; private set; }
         public WeatherType Type { get; private set; }
         public byte Count { get; private set; }
-        public byte ScaledCount { get; private set; }
-        public byte CurrentCount { get; private set; }
+        public int ScaledCount { get; private set; }
+        public int CurrentCount { get; private set; }
         public byte Temperature{ get; private set; }
         public sbyte Wind { get; private set; }
 
@@ -57,7 +58,8 @@ namespace ClassicUO.Game
         public void Reset()
         {
             Type = 0;
-            Count = CurrentCount = Temperature = 0;
+            Count = Temperature = 0;
+            CurrentCount = 0;
             Wind = 0;
             _windTimer = _timer = 0;
             CurrentWeather = null;
@@ -65,12 +67,21 @@ namespace ClassicUO.Game
 
         public void Generate(WeatherType type, byte count, byte temp)
         {
-            bool extended = CurrentWeather.HasValue && CurrentWeather == type;
-
-            if (!extended)
+            // ServUO resends the weather every 30 seconds with a rising or falling density. A repeat of the
+            // current type takes the new density and restarts the timer, but keeps the wind and the particles
+            // and shows no message.
+            if ((CurrentWeather == type) && (count > 0))
             {
-                Reset();
+                Count = (byte) Math.Min(MAX_WEATHER_EFFECT, (int) count);
+                Temperature = temp;
+                _timer = Time.Ticks + Constants.WEATHER_TIMER;
+                ScaledCount = CalculateScaledCount(Count);
+                CurrentCount = ScaledCount;
+
+                return;
             }
+
+            Reset();
 
             Type = type;
             Count = (byte) Math.Min(MAX_WEATHER_EFFECT, (int) count);
@@ -87,7 +98,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            bool showMessage = Count > 0 && !extended;
+            bool showMessage = Count > 0;
 
             switch (type)
             {
@@ -184,14 +195,14 @@ namespace ClassicUO.Game
             }
         }
 
-        private static byte CalculateScaledCount(byte count)
+        private static int CalculateScaledCount(byte count)
         {
             if (count <= 0)
             {
                 return 0;
             }
             float legacyWindowSize = 640 * 480;
-            return (byte)Math.Max(1, Math.Min(byte.MaxValue, count * (Client.Game.Scene.Camera.Bounds.Width * Client.Game.Scene.Camera.Bounds.Height) / legacyWindowSize));
+            return (int)Math.Max(1, Math.Min(MAX_WEATHER_PARTICLES, count * (Client.Game.Scene.Camera.Bounds.Width * Client.Game.Scene.Camera.Bounds.Height) / legacyWindowSize));
         }
 
         private void PlayWind()
@@ -243,11 +254,11 @@ namespace ClassicUO.Game
             }
 
             //Rescale the count if window size has changed
-            byte newScaledCount = CalculateScaledCount(Count);
+            int newScaledCount = CalculateScaledCount(Count);
 
             if (newScaledCount != ScaledCount)
             {
-                CurrentCount = (byte)Math.Min(byte.MaxValue, CurrentCount * newScaledCount / ScaledCount);
+                CurrentCount = Math.Min(MAX_WEATHER_PARTICLES, CurrentCount * newScaledCount / ScaledCount);
                 ScaledCount = newScaledCount;
             }
 
@@ -372,12 +383,13 @@ namespace ClassicUO.Game
                             effect.SpeedY = 6.0f;
                         }
 
+                        // Set on every frame, so a particle that a higher density or a larger window adds moves at once
+                        effect.SpeedAngle = MathHelper.ToDegrees((float) Math.Atan2(effect.SpeedX, effect.SpeedY));
+
+                        effect.SpeedMagnitude = (float) Math.Sqrt(Math.Pow(effect.SpeedX, 2) + Math.Pow(effect.SpeedY, 2));
+
                         if (windChanged)
                         {
-                            effect.SpeedAngle = MathHelper.ToDegrees((float) Math.Atan2(effect.SpeedX, effect.SpeedY));
-
-                            effect.SpeedMagnitude = (float) Math.Sqrt(Math.Pow(effect.SpeedX, 2) + Math.Pow(effect.SpeedY, 2));
-
                             if (Type == WeatherType.WT_SNOW)
                             {
                                 PlayWind();
