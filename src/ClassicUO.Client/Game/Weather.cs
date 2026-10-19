@@ -51,7 +51,7 @@ namespace ClassicUO.Game
         {
             float anglef = (int) (current_tick / 2.7777f * freq) % 360;
 
-            return Math.Sign(MathHelper.ToRadians(anglef)) * range;
+            return (float) Math.Sin(MathHelper.ToRadians(anglef)) * range;
         }
 
 
@@ -192,6 +192,10 @@ namespace ClassicUO.Game
                 ref WeatherEffect effect = ref _effects[i];
                 effect.X = RandomHelper.GetValue(0, Client.Game.Scene.Camera.Bounds.Width);
                 effect.Y = RandomHelper.GetValue(0, Client.Game.Scene.Camera.Bounds.Height);
+
+                // OrionUO (WeatherEffeect.cpp): the ID shifts the sway phase, and the scale ratio adds up to about 1.5 to the speed
+                effect.ID = (uint) RandomHelper.GetValue(0, 1999);
+                effect.ScaleRatio = (effect.ID % 20) / 13.0f;
             }
         }
 
@@ -285,7 +289,7 @@ namespace ClassicUO.Game
 
                 Wind = (sbyte) RandomHelper.GetValue(0, 4);
 
-                if (RandomHelper.GetValue(0, 2) != 0)
+                if (RandomHelper.GetValue(0, 1) != 0)
                 {
                     Wind *= -1;
                 }
